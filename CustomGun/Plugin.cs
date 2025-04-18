@@ -1,0 +1,169 @@
+﻿using System;
+using System.Collections.Generic;
+using Exiled.API.Features;
+using Exiled.API.Enums;
+using Exiled.CustomItems.API.Features;
+using Exiled.Events.EventArgs.Player;
+using Exiled.Events.EventArgs.Server;
+using MEC;
+using UnityEngine;
+using Player = Exiled.API.Features.Player;
+using Firearm = Exiled.API.Features.Items.Firearm;
+using InventorySystem.Items.Firearms;
+using Exiled.API.Features.Spawn;
+using Exiled.CustomItems.API;
+
+namespace CustomM4Plugin
+{
+    public class CustomM4Plugin : Plugin<Config>
+    {
+        public override string Author => "Skay";
+        public override string Name => "CustomGun";
+        public override string Prefix => "customgun";
+        public override Version Version => new Version(1, 0, 9);
+
+        public static CustomM4Plugin Instance;
+        private CustomM4 customM4;
+        private Dictionary<string, int> weaponShotCounts = new Dictionary<string, int>();
+
+        public override void OnEnabled()
+        {
+            Instance = this;
+            customM4 = new CustomM4();
+            customM4.Register();
+
+            Exiled.Events.Handlers.Server.RoundStarted += OnRoundStarted;
+            Exiled.Events.Handlers.Player.Shooting += OnShooting;
+            Exiled.Events.Handlers.Player.Hurting += OnHurting;
+            Exiled.Events.Handlers.Player.PickingUpItem += OnPickingUp;
+            Exiled.Events.Handlers.Player.Destroying += OnDestroying;
+
+            base.OnEnabled();
+        }
+
+        public override void OnDisabled()
+        {
+            customM4.Unregister();
+
+            Exiled.Events.Handlers.Server.RoundStarted -= OnRoundStarted;
+            Exiled.Events.Handlers.Player.Shooting -= OnShooting;
+            Exiled.Events.Handlers.Player.Hurting -= OnHurting;
+            Exiled.Events.Handlers.Player.PickingUpItem -= OnPickingUp;
+            Exiled.Events.Handlers.Player.Destroying -= OnDestroying;
+
+            weaponShotCounts.Clear();
+            Instance = null;
+            base.OnDisabled();
+        }
+
+        private void OnRoundStarted()
+        {
+            var room = Room.Get(RoomType.HczArmory);
+            if (room != null)
+            {
+                customM4.Spawn(room.Position + Vector3.up);
+            }
+        }
+
+        private void OnShooting(ShootingEventArgs ev)
+        {
+            if (ev.Firearm == null || !customM4.Check(ev.Firearm))
+                return;
+
+            string weaponId = ev.Firearm.Serial.ToString();
+
+            if (!weaponShotCounts.ContainsKey(weaponId))
+                weaponShotCounts[weaponId] = 0;
+
+            weaponShotCounts[weaponId]++;
+            if (weaponShotCounts[weaponId] >= 5)
+            {
+                Timing.CallDelayed(0.1f, () =>
+                {
+                    if (ev.Player.CurrentItem != null &&
+                        customM4.Check(ev.Player.CurrentItem) &&
+                        ev.Player.CurrentItem.Serial == ev.Firearm.Serial)
+                    {
+                        ev.Player.RemoveItem(ev.Player.CurrentItem);
+                        weaponShotCounts.Remove(weaponId);
+                    }
+                });
+            }
+        }
+
+        private void OnHurting(HurtingEventArgs ev)
+        {
+            if (ev.Attacker != null &&
+                ev.Attacker.CurrentItem != null &&
+                customM4.Check(ev.Attacker.CurrentItem))
+            {
+                ev.Amount = 300f;
+            }
+        }
+
+        private void OnPickingUp(PickingUpItemEventArgs ev)
+        {
+            if (customM4.Check(ev.Pickup))
+            {
+                string weaponId = ev.Pickup.Serial.ToString();
+                int shotsFired = weaponShotCounts.ContainsKey(weaponId) ? weaponShotCounts[weaponId] : 0;
+                Timing.CallDelayed(0.1f, () =>
+                {
+                    if (ev.Player.CurrentItem is Firearm firearm)
+                    {
+                        firearm.Ammo = 10;
+                        firearm.MaxAmmo = 10;
+                    }
+                });
+            }
+        }
+
+        private void OnDestroying(DestroyingEventArgs ev)
+        {
+            foreach (var item in ev.Player.Items)
+            {
+                if (customM4.Check(item))
+                {
+                    string weaponId = item.Serial.ToString();
+                    if (weaponShotCounts.ContainsKey(weaponId))
+                    {
+                        weaponShotCounts.Remove(weaponId);
+                    }
+                }
+            }
+        }
+    }
+
+    public class CustomM4 : CustomItem
+    {
+        public override uint Id { get; set; } = 201;
+        public override string Name { get; set; } = "Mega Gun";
+        public override string Description { get; set; } = "Убивает с 1 выстрела";
+        public override float Weight { get; set; } = 3.5f;
+        public override ItemType Type { get; set; } = ItemType.GunE11SR;
+        public override SpawnProperties SpawnProperties { get; set; } = new SpawnProperties();
+
+        protected override void SubscribeEvents()
+        {
+            base.SubscribeEvents();
+            Exiled.Events.Handlers.Player.PickingUpItem += OnPickingUp;
+        }
+
+        protected override void UnsubscribeEvents()
+        {
+            base.UnsubscribeEvents();
+            Exiled.Events.Handlers.Player.PickingUpItem -= OnPickingUp;
+        }
+
+        protected override void OnPickingUp(PickingUpItemEventArgs ev)
+        {
+            base.OnPickingUp(ev);
+        }
+    }
+
+    public class Config : Exiled.API.Interfaces.IConfig
+    {
+        public bool IsEnabled { get; set; } = true;
+        public bool Debug { get; set; } = false;
+    }
+}
